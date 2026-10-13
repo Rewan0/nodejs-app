@@ -1,54 +1,63 @@
 pipeline {
     agent any
- 
+
     environment {
-        APP_NAME = 'node-hello-nti' 
         REPO_URL = "https://github.com/Rewan0/nodejs-app.git"
     }
 
     stages {
+        stage('Set Environment') {
+            steps {
+                script {
+                    def config = [
+                        main: [name: 'node-hello-nti-main', port: '3000'],
+                        dev : [name: 'node-hello-nti-dev',  port: '3001'],
+                        stg : [name: 'node-hello-nti-stg',  port: '3002']
+                    ]
+
+                    def cfg = config[env.BRANCH_NAME]
+                    if (!cfg) {
+                        error "Unsupported branch: ${env.BRANCH_NAME}"
+                    }
+
+                    env.APP_NAME  = cfg.name
+                    env.HOST_PORT = cfg.port
+                    echo "Branch: ${env.BRANCH_NAME} | App: ${env.APP_NAME} | Port: ${env.HOST_PORT}"
+                }
+            }
+        }
+
         stage('Getting Repo files') {
             steps {
-                git branch: "main", credentialsId: 'dde', url: "${REPO_URL}"
+                checkout scm
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                script {
-                    sh """
-                        docker build -t ${APP_NAME}:${BUILD_NUMBER} .
-                    """
-                }
+                sh 'docker build -t ${APP_NAME}:${BUILD_NUMBER} .'
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                script {
-                    withCredentials([usernamePassword(credentialsId: 'docker', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
-
-                        sh """
-                            echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USERNAME} --password-stdin
-
-                            docker tag ${APP_NAME}:${BUILD_NUMBER} ${DOCKER_USERNAME}/${APP_NAME}:${BUILD_NUMBER}
-
-                            docker push ${DOCKER_USERNAME}/${APP_NAME}:${BUILD_NUMBER}
-                        """
-
-                    }
+                withCredentials([usernamePassword(credentialsId: 'docker', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
+                    sh '''
+                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
+                        docker tag ${APP_NAME}:${BUILD_NUMBER} $DOCKER_USERNAME/${APP_NAME}:${BUILD_NUMBER}
+                        docker push $DOCKER_USERNAME/${APP_NAME}:${BUILD_NUMBER}
+                    '''
                 }
             }
         }
 
         stage('Run Docker Container') {
             steps {
-                script {
-                    sh """
-                        docker run -p 3000:3000 --name "${APP_NAME}"-"main"-${BUILD_NUMBER} -d ${APP_NAME}:${BUILD_NUMBER}
-                        docker ps
-                    """
-                }
+                sh '''
+                    docker rm -f ${APP_NAME} || true
+                    docker run -d -p ${HOST_PORT}:3000 --name ${APP_NAME} ${APP_NAME}:${BUILD_NUMBER}
+                    docker ps
+                '''
             }
         }
     }
